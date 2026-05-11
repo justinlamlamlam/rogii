@@ -69,7 +69,7 @@ if __name__ == "__main__":
             for idx, pred in zip(original_indices, predictions):
                 results.append({
                     "id": f"{well_id}_{idx}",
-                    "predicted_tvt": pred
+                    "tvt": pred
                 })
 
     # 4. Save to DataFrame
