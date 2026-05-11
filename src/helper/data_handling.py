@@ -1,3 +1,5 @@
+# data_handling.py
+
 import numpy as np
 import pandas as pd
 import os
@@ -36,8 +38,8 @@ def get_raw_data(data_loc: str) -> dict:
     prefixes = get_csv_prefixes(data_loc=data_loc)
     raw_data = {}
     for prefix in prefixes:
-        horizontal_well, typewell = pd.read_csv(f"{prefix}_horizontal_well.csv"), pd.read_csv(f"{prefix}_typewell.csv")
-        assert horizontal_well
-        assert typewell
+        horizontal_well, typewell = pd.read_csv(f"{data_loc}/{prefix}__horizontal_well.csv"), pd.read_csv(f"{data_loc}/{prefix}__typewell.csv")
+        assert horizontal_well is not None
+        assert typewell is not None
         raw_data[prefix] = (horizontal_well, typewell)
     return raw_data
