@@ -76,4 +76,4 @@ if __name__ == "__main__":
     output_df = pd.DataFrame(results)
 
     print(output_df.head())
-    # output_df.to_csv("predictions.csv", index=False)
+    output_df.to_csv("submission.csv", index=False)
