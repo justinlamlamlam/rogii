@@ -59,7 +59,7 @@ if __name__ == "__main__":
             val_matrix, dist_matrix = helper.geology.get_n_nearest_neighbors(
                 query_points=query_coords, 
                 index_bundle=index_bundle, 
-                k=5
+                k=1
             )
             predictions = helper.geology.calculate_weighted_tvt(neighbor_targets=val_matrix, distances=dist_matrix)
             
