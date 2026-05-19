@@ -1,109 +1,60 @@
-import helper
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import helper
 
-def calculate_tvt_change_stats(raw_data: dict) -> dict:
+def plot_tvt_mapping_verification(typewell_df: pd.DataFrame, num_points: int = 30, subdivisions: int = 5) -> None:
     """
-    Calculates the max, min, mean, and median of the change in "TVT" 
-    across all horizontal wells in the raw_data dictionary.
+    Plots the original typewell TVT vs GR nodes against finer subdivided 
+    interpolated points to verify that the linear mapping functions correctly.
 
     Args:
-        raw_data (dict): Dictionary where keys are well IDs and values 
-                         are tuples of (horizontal_well_df, typewell_df).
+        typewell_df (pd.DataFrame): DataFrame containing 'TVT' and 'GR' columns.
+        num_points (int): Number of original nodes to plot from the start. Defaults to 30.
+        subdivisions (int): Number of intermediate points to generate between each node. Defaults to 5.
 
-    Returns:
-        dict: A dictionary containing 'max', 'min', 'mean', and 'median' of the TVT changes.
-    """
-    all_changes = []
-
-    for prefix, data_tuple in raw_data.items():
-        horizontal_well = data_tuple[0]
-        
-        if "TVT" in horizontal_well.columns:
-            # Calculate the difference between consecutive rows
-            # diff() calculates: row[n] - row[n-1]
-            changes = horizontal_well["TVT"].diff().dropna()
-            all_changes.extend(changes.tolist())
-
-    if not all_changes:
-        return {"max": None, "min": None, "mean": None, "median": None}
-
-    stats = {
-        "max": np.max(all_changes),
-        "min": np.min(all_changes),
-        "mean": np.mean(all_changes),
-        "median": np.median(all_changes)
-    }
-
-    return stats
-
-def plot_tvt_changes(raw_data: dict) -> None:
-    """
-    Plots the change in "TVT" as a line plot for the first 20 rows where "TVT_input" is NaN.
-
-    Args:
-        raw_data (dict): Dictionary where keys are well IDs and values 
-                         are tuples of (horizontal_well_df, typewell_df).
     Returns:
         None: Displays a matplotlib plot.
     """
+    # Extract the first N rows
+    subset_df = typewell_df.head(n=num_points)
+    tvt_nodes = subset_df['TVT'].values
+    gr_nodes = subset_df['GR'].values
+
+    # Generate subdivided TVT points
+    subdivided_tvt = []
+    for i in range(len(tvt_nodes) - 1):
+        # Linearly space points between node i and node i+1
+        segment_tvt = np.linspace(start=tvt_nodes[i], stop=tvt_nodes[i+1], num=subdivisions + 2)
+        # Exclude the last point to prevent duplicates in the loop
+        subdivided_tvt.extend(segment_tvt[:-1])
+    # Add the final node
+    subdivided_tvt.append(tvt_nodes[-1])
+    subdivided_tvt = np.array(subdivided_tvt)
+
+    # Calculate GR using linear interpolation (simulating forward_map logic)
+    subdivided_gr = np.interp(x=subdivided_tvt, xp=typewell_df['TVT'].values, fp=typewell_df['GR'].values)
+
+    # Plotting
     plt.figure(figsize=(12, 6))
     
-    for prefix, data_tuple in raw_data.items():
-        horizontal_well = data_tuple[0]
-        
-        if "TVT" in horizontal_well.columns and "TVT_input" in horizontal_well.columns:
-            # Calculate consecutive change
-            tvt_change = horizontal_well["TVT"].diff()
-            
-            # Filter delta TVT where TVT_input is NaN and select top 20
-            filtered_changes = tvt_change[horizontal_well["TVT_input"].isna()].head(20)
-            
-            if not filtered_changes.empty:
-                # Plotting as a line plot
-                plt.plot(filtered_changes.index, filtered_changes.values, label=f"Well {prefix}", alpha=0.7)
+    # Plot original nodes
+    plt.scatter(tvt_nodes, gr_nodes, color='black', zorder=5, label='Original Nodes (0.5 TVT intervals)')
+    plt.plot(tvt_nodes, gr_nodes, color='black', linestyle='--', alpha=0.5, label='Node Segments')
+    
+    # Plot subdivided points
+    plt.scatter(subdivided_tvt, subdivided_gr, color='red', marker='x', s=20, zorder=4, label='Subdivided Interpolated Points')
 
-    plt.title(label="Top 20 Delta TVT (where TVT_input is NaN)")
-    plt.xlabel(xlabel="DataFrame Index")
-    plt.ylabel(ylabel="Delta TVT")
-    plt.legend()
-    plt.grid(visible=True, linestyle='--', alpha=0.6)
+    plt.title(label=f"TVT vs GR Mapping Verification (First {num_points} Nodes)")
+    plt.xlabel(xlabel="Total Vertical Thickness (TVT)")
+    plt.ylabel(ylabel="Gamma Ray (GR)")
+    plt.legend(loc="best")
+    plt.grid(visible=True, linestyle=':', alpha=0.6)
     plt.show()
 
-def find_well_and_index_with_large_tvt_drop(raw_data: dict) -> None:
-    """
-    Identifies the well ID and the specific row indices where the "TVT" change is less than -100, 
-    then prints the results.
-
-    Args:
-        raw_data (dict): Dictionary where keys are well IDs and values 
-                         are tuples of (horizontal_well_df, typewell_df).
-
-    Returns:
-        None: Prints the well ID and index if found.
-    """
-    for prefix, data_tuple in raw_data.items():
-        horizontal_well = data_tuple[0]
-        
-        if "TVT" in horizontal_well.columns:
-            # Calculate the difference between consecutive rows
-            tvt_change = horizontal_well["TVT"].diff()
-            
-            # Find indices where the condition is met
-            # Using .index[condition] to get the specific row labels
-            problem_indices = tvt_change[tvt_change < -100].index.tolist()
-            
-            if problem_indices:
-                print(f"Well ID: {prefix}")
-                print(f"Problem Indices: {problem_indices}")
-
 if __name__ == "__main__":
-    # Load data
     data_path = "/home/justinlamlamlam/python/kaggle/rogii/data/raw/train"
-    raw_data = helper.data_handling.get_raw_data(data_loc=data_path)
-    tvt_stats = calculate_tvt_change_stats(raw_data=raw_data)
-    print(tvt_stats)
-    # find_well_and_index_with_large_tvt_drop(raw_data=raw_data)
-    plot_tvt_changes(raw_data=raw_data)
-
+    raw_train_data = helper.data_handling.get_raw_data(data_loc=data_path)
+    for i, (well_id, (hw_df, tw_df)) in enumerate(raw_train_data.items()):
+        plot_tvt_mapping_verification(typewell_df=tw_df)
+        break
