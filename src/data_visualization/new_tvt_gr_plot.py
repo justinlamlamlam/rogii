@@ -10,7 +10,7 @@ sys.path.append("/home/justinlamlamlam/python/kaggle/rogii/src")
 import helper
 from helper.global_optimization import GlobalPathOptimizer
 
-def plot_well_data_with_optimization(raw_data: dict) -> None:
+def plot_well_data_with_optimization(*, raw_data: dict) -> None:
     """
     Generates and saves a figure with five subplots per well prefix.
     Calculates the optimized TVT path and plots it against the original TVT.
@@ -18,12 +18,15 @@ def plot_well_data_with_optimization(raw_data: dict) -> None:
     Args:
         raw_data (dict): Dictionary where keys are well prefixes (str) and values are 
                          tuples of (horizontal_well_df, typewell_df).
+    
+    Returns:
+        None
     """
     os.makedirs("data/graphs", exist_ok=True)
     
-    # Process the first 10 items
+    # Process the first 1 items
     for i, (prefix, (horizontal_well, typewell)) in enumerate(raw_data.items()):
-        if i >= 10:
+        if i >= 1:
             break
             
         # Filter horizontal well data where 'TVT_input' is NaN
@@ -42,8 +45,7 @@ def plot_well_data_with_optimization(raw_data: dict) -> None:
             typewell_df=typewell,
             tvt_discretization_step=0.1,  # Adjusted to 0.05 for a balanced performance/speed trade-off
             max_tvt_change_slight=0.1,
-            max_points_without_jump=50,
-            max_jumps=5
+            jump_penalty=4.0
         )
         
         optimized_tvt, min_error = optimizer.run()
@@ -166,4 +168,4 @@ def plot_well_data_with_optimization(raw_data: dict) -> None:
 if __name__ == "__main__":
     data_path = "/home/justinlamlamlam/python/kaggle/rogii/data/raw/train"
     raw_train_data = helper.data_handling.get_raw_data(data_loc=data_path)
-    plot_well_data_with_optimization(raw_train_data)
+    plot_well_data_with_optimization(raw_data=raw_train_data)
