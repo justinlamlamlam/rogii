@@ -3,11 +3,35 @@
 import os
 import pandas as pd
 import sys
+import argparse
 sys.path.append("./src")
 
 import helper
 from helper.data_handling import get_raw_data, preprocess_data
 from helper.global_optimization import optimize_well_tvt
+
+def parse_user_arguments() -> argparse.Namespace:
+    """
+    Initializes an ArgumentParser to handle CLI inputs.
+
+    Args:
+        None
+
+    Returns:
+        argparse.Namespace: An object containing the parsed argument values as attributes.
+    """
+    parser = argparse.ArgumentParser()
+
+    # String argument
+    parser.add_argument(
+        "--data_loc", 
+        type=str, 
+        required=True, 
+        help="raw data location"
+    )
+
+    args = parser.parse_args()
+    return args
 
 def run_inference(data_dir: str) -> list:
     """
@@ -58,16 +82,18 @@ def run_inference(data_dir: str) -> list:
     return predictions_list
 
 if __name__ == "__main__":
-    # Example execution utilizing placeholder test directory structure paths
-    data_path = "/home/justinlamlamlam/python/kaggle/rogii/data/raw/train"
-    results = run_inference(data_dir=data_path)
+    # Parsing arguments
+    args = parse_user_arguments()
+    
+    # Run the inference pipeline using the parsed directory argument
+    results = run_inference(data_dir=args.data_loc)
     print(f"Retrieved predictions for {len(results)} wells.")
 
     # Format the predictions into submission format: {well_id}_{original_index}
     submission_results = []
     
     # Reload raw data from path to access original indices accurately matching the mask logic
-    raw_data = get_raw_data(data_loc=data_path)
+    raw_data = get_raw_data(data_loc=args.data_loc)
     
     for entry in results:
         well_id = entry["well_id"]
