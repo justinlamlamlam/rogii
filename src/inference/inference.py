@@ -68,7 +68,11 @@ def run_inference(data_dir: str) -> list:
         # Call the single well prediction function using keyword arguments
         predicted_tvts = optimize_well_tvt(
             horizontal_df=output_df, 
-            typewell_df=typewell
+            typewell_df=typewell,
+            bin_size=0.1,
+            max_tvt_diff=20,
+            beam_width=100,
+            allow_jump=False,
         )
         
         # Identify rows requiring evaluation mapping (NaN values)
