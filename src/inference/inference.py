@@ -4,7 +4,13 @@ import os
 import pandas as pd
 import sys
 import argparse
-sys.path.append("./src")
+# Dynamic path resolution based on the script location, not execution location
+current_script_dir = os.path.dirname(os.path.abspath(__file__))
+# Moves up two levels from 'a/src/b/main.py' to reach 'a/src/'
+src_path = os.path.abspath(os.path.join(current_script_dir, "..", ".."))
+
+if src_path not in sys.path:
+    sys.path.append(src_path)
 
 import helper
 from helper.data_handling import get_raw_data, preprocess_data
