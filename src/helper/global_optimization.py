@@ -1,249 +1,195 @@
-# global_opetimization.py
-
 import numpy as np
 import pandas as pd
 from tqdm.auto import tqdm
-from typing import Dict, List, Tuple, Optional
-from collections import defaultdict
+from helper.math_mapping import tvt_to_gr, gr_to_tvt
 
-from helper.math_mapping import forward_map, inverse_set, get_discretized_tvt_grid
+def optimize_well_tvt(
+    horizontal_df: pd.DataFrame, 
+    typewell_df: pd.DataFrame, 
+    jump_penalty: float = 50.0,
+    beam_width: int = 20,
+    bin_size: float = 1.0,
+    max_tvt_diff: float = 105.0,
+    allow_jump: bool = True
+) -> list:
+    """Optimizes the TVT assignment sequence for a horizontal well's evaluation zone.
 
-class DPState:
-    def __init__(self, *, i: int, v: int):
-        """
-        Represents a state in the dynamic programming grid.
+    Finds a sequence of TVT values that minimizes the cumulative squared error 
+    between observed GR and mapped TVT values, incorporating specified transition 
+    constraints and jump penalties using an A* Beam Search approach with grid binning.
 
-        Args:
-            i (int): Current index in the GR point list.
-            v (int): The current TVT bin index.
-        """
-        self.i = i
-        self.v = v
+    Args:
+        horizontal_df (pd.DataFrame): Dataframe containing the well log data with columns 
+            'GR' and 'TVT_input'.
+        typewell_df (pd.DataFrame): Reference vertical log dataframe.
+        jump_penalty (float): Penalty added to the cost function when making a non-local jump.
+        beam_width (int): Maximum number of active states tracked per sequence step to control complexity.
+        bin_size (float): The width of each discrete TVT bin used for spatial pruning.
+        max_tvt_diff (float): Maximum allowed structural absolute deviation from the starting TVT value.
+        allow_jump (bool): Flag to enable or disable non-local jump transitions.
+
+    Returns:
+        list: Optimized TVT assignments matching the length of the evaluation zone sequence.
+    """
+    # Isolate evaluation zone where target TVT is unknown
+    eval_mask = horizontal_df["TVT_input"].isna()
+    eval_gr = horizontal_df.loc[eval_mask, "GR"].values
     
-    def __eq__(self, other):
-        return self.i == other.i and self.v == other.v
-    
-    def __hash__(self):
-        return hash((self.i, self.v))
-    
-    def __repr__(self):
-        return f"DPState(i={self.i}, v={self.v})"
+    if len(eval_gr) == 0:
+        return []
 
+    # Identify the starting anchor TVT right before the evaluation zone
+    pre_eval_idx = horizontal_df[~eval_mask].index
+    if len(pre_eval_idx) > 0:
+        tvt_start = horizontal_df.loc[pre_eval_idx[-1], "TVT_input"]
+    else:
+        # Fallback if evaluation zone starts at index 0
+        first_gr = eval_gr[0]
+        possible_starts = gr_to_tvt(gr_target=first_gr, typewell_df=typewell_df)
+        tvt_start = possible_starts[0] if len(possible_starts) > 0 else 0.0
 
-class GlobalPathOptimizer:
-    def __init__(self, 
-                 *,
-                 gr_sequence: np.ndarray,
-                 typewell_df: pd.DataFrame,
-                 tvt_discretization_step: float = 0.01,
-                 max_tvt_change_slight: float = 0.1,
-                 jump_penalty: float = 4.0):
-        """
-        Optimizes the TVT path globally across a discretized state-space grid.
+    # Initialize beam pool with the starting state
+    # State structure: (current_tvt, g_score, path_list)
+    current_states = [(tvt_start, 0.0, [])]
 
-        Args:
-            gr_sequence (np.ndarray): Sequence of measured GR targets.
-            typewell_df (pd.DataFrame): Reference DataFrame containing 'TVT' and 'GR' profiles.
-            tvt_discretization_step (float): Step resolution for the TVT grid axis.
-            max_tvt_change_slight (float): Max allowed TVT distance for neighborhood transitions.
-            jump_penalty (float): Penalty added to cumulative error when a jump occurs.
-        """
+    # Process each observed Gamma Ray value sequentially
+    for gr_obs in tqdm(eval_gr, desc="Optimizing TVT Path"):
+        candidates = []
         
-        self.gr_sequence = gr_sequence
-        self.typewell_df = typewell_df
-        self.tvt_step = tvt_discretization_step
-        self.max_tvt_change_slight = max_tvt_change_slight
-        self.jump_penalty = jump_penalty
-        
-        self._setup_tvt_grid()
-        
-        # DP state tracking: maps (i, v) -> metric values
-        self.dp_states: Dict[Tuple[int, int], float] = {}
-        self.parent_map: Dict[Tuple[int, int], Tuple[int, int]] = {}
-        self.tvt_at_state: Dict[Tuple[int, int], float] = {}
-    
-    def _setup_tvt_grid(self):
-        """Setup the discretized TVT grid and precompute the local neighborhood range."""
-        # Use get_discretized_tvt_grid from math_mapping to establish the grid
-        self.tvt_grid = get_discretized_tvt_grid(self.typewell_df, step=self.tvt_step)
-        self.tvt_to_bin = {float(tvt): idx for idx, tvt in enumerate(self.tvt_grid)}
-        
-        # --- OPTIMIZATION: Calculate the maximum index offset allowed for slight changes ---
-        # Using a small epsilon to safeguard against floating-point precision issues
-        self.max_bin_offset = int(np.floor((self.max_tvt_change_slight + 1e-9) / self.tvt_step))
-    
-    def _tvt_to_bin_index(self, *, tvt: float) -> int:
-        idx = np.searchsorted(self.tvt_grid, tvt, side='left')
-        return min(idx, len(self.tvt_grid) - 1)
-    
-    def _bin_index_to_tvt(self, *, bin_idx: int) -> float:
-        return float(self.tvt_grid[bin_idx])
-    
-    def _compute_error(self, *, gr_measured: float, gr_predicted: float) -> float:
-        return (gr_predicted - gr_measured) ** 2
-    
-    def _transition_slight_change(self, 
-                                  *,
-                                  i: int, 
-                                  v: int,
-                                  gr_target: float) -> List[Tuple[Tuple[int, int], float, float]]:
-        """
-        O(1) Neighborhood Expansion: Only look at valid neighboring bins instead of scanning V.
-
-        Args:
-            i (int): Current point index.
-            v (int): Current TVT bin index.
-            gr_target (float): Target GR value at step i + 1.
-
-        Returns:
-            List[Tuple[Tuple[int, int], float, float]]: Transition choices containing (next_state_key, error, next_tvt).
-        """
-        transitions = []
-        
-        # --- OPTIMIZATION: Compute localized boundary indices ---
-        min_bin_idx = max(0, v - self.max_bin_offset)
-        max_bin_idx = min(len(self.tvt_grid) - 1, v + self.max_bin_offset)
-        
-        # Iterate only through the valid local window, eliminating the O(V) scan
-        for next_bin_idx in range(min_bin_idx, max_bin_idx + 1):
-            next_tvt = self._bin_index_to_tvt(bin_idx=next_bin_idx)
+        # Branch transitions from each active state in the beam
+        for last_tvt, g_score, path in current_states:
             
-            # Call forward_map imported from math_mapping
-            gr_predicted = forward_map(next_tvt, self.typewell_df)
-            error = self._compute_error(gr_measured=gr_target, gr_predicted=gr_predicted)
+            # --- Operation 1: Slight Change (Local Move) ---
+            # Effective neighborhood constraint window
+            local_delta = min(0.1, bin_size)
             
-            next_state_key = (i + 1, next_bin_idx)
-            transitions.append((next_state_key, error, next_tvt))
-        
-        return transitions
-    
-    def _transition_jump(self, 
-                         *,
-                         i: int, 
-                         gr_target: float) -> List[Tuple[Tuple[int, int], float, float]]:
-        """
-        Multi-Branching Jump Transition: Identifies all inverse nodes matching target GR and applies a penalty cost.
-
-        Args:
-            i (int): Current point index.
-            gr_target (float): Target GR value at step i + 1.
-
-        Returns:
-            List[Tuple[Tuple[int, int], float, float]]: Transition choices containing (next_state_key, total_error, next_tvt).
-        """
-        transitions = []
-        # Call inverse_set imported from math_mapping
-        tvt_candidates = inverse_set(gr_target, self.typewell_df)
-        
-        for next_tvt in tvt_candidates:
-            next_bin_idx = self._tvt_to_bin_index(tvt=next_tvt)
-            
-            # Call forward_map imported from math_mapping
-            gr_predicted = forward_map(next_tvt, self.typewell_df)
-            
-            # Base tracking error + fixed jump penalty
-            error = self._compute_error(gr_measured=gr_target, gr_predicted=gr_predicted) + self.jump_penalty
-            
-            next_state_key = (i + 1, next_bin_idx)
-            transitions.append((next_state_key, error, next_tvt))
-        
-        return transitions
-    
-    def run(self) -> Tuple[List[float], float]:
-        """
-        Executes the forward dynamic programming pass and extracts the optimal global path.
-        Prints the structural complexity parameters (N, M, T) and their product before running.
-
-        Returns:
-            Tuple[List[float], float]: Formed by a list representing the optimized TVT sequence and a float for the absolute minimum total error.
-        """
-        n = len(self.gr_sequence)
-        m = len(self.tvt_grid)
-        t = len(self.typewell_df)
-        product_nmt = n * m * t
-        
-        print(f"DP Complexity Parameters Initialization:")
-        print(f"  N (Sequence Length)       = {n}")
-        print(f"  M (Discretized Grid Bins) = {m}")
-        print(f"  T (Typewell Node Rows)    = {t}")
-        print(f"  N * M * T Upper Bound     = {product_nmt}")
-        
-        gr_target_0 = self.gr_sequence[0]
-        # Call inverse_set imported from math_mapping
-        tvt_candidates_0 = inverse_set(gr_target_0, self.typewell_df)
-        
-        for tvt_val in tvt_candidates_0:
-            bin_idx = self._tvt_to_bin_index(tvt=tvt_val)
-            
-            # Call forward_map imported from math_mapping
-            gr_predicted = forward_map(tvt_val, self.typewell_df)
-            error = self._compute_error(gr_measured=gr_target_0, gr_predicted=gr_predicted)
-            
-            state_key = (0, bin_idx)
-            self.dp_states[state_key] = error
-            self.tvt_at_state[state_key] = tvt_val
-        
-        for i in tqdm(range(n - 1)):
-            gr_target = self.gr_sequence[i + 1]
-            
-            active_states_at_i = [
-                v for (idx, v) in self.dp_states.keys() if idx == i
+            # Sample boundary points and the center of the local movement window
+            local_candidates = [
+                last_tvt - local_delta,
+                last_tvt,
+                last_tvt + local_delta
             ]
             
-            for v in active_states_at_i:
-                current_state_key = (i, v)
-                current_error = self.dp_states[current_state_key]
-                
-                # Option 1: Slight Change Neighborhood Exploration
-                slight_transitions = self._transition_slight_change(i=i, v=v, gr_target=gr_target)
-                for next_state_key, transition_error, next_tvt in slight_transitions:
-                    total_error = current_error + transition_error
+            for tvt_next in local_candidates:
+                if abs(tvt_next - tvt_start) <= max_tvt_diff:
+                    gr_pred = tvt_to_gr(tvt=tvt_next, typewell_df=typewell_df)
+                    cost_step = (gr_obs - gr_pred) ** 2
+                    candidates.append((tvt_next, g_score + cost_step, path + [tvt_next]))
+
+            # --- Operation 2: Jump (Fault / Non-Local Move) ---
+            if allow_jump:
+                jump_targets = gr_to_tvt(gr_target=gr_obs, typewell_df=typewell_df)
+                if isinstance(jump_targets, (int, float)):
+                    jump_targets = [jump_targets]
                     
-                    if next_state_key not in self.dp_states or total_error < self.dp_states[next_state_key]:
-                        self.dp_states[next_state_key] = total_error
-                        self.parent_map[next_state_key] = current_state_key
-                        self.tvt_at_state[next_state_key] = next_tvt
+                for tvt_jump in jump_targets:
+                    if abs(tvt_jump - tvt_start) <= max_tvt_diff:
+                        gr_pred = tvt_to_gr(tvt=tvt_jump, typewell_df=typewell_df)
+                        cost_step = (gr_obs - gr_pred) ** 2 + jump_penalty
+                        candidates.append((tvt_jump, g_score + cost_step, path + [tvt_jump]))
+
+        if not candidates:
+            # Fallback if all paths violate max_tvt_diff constraint
+            break
+
+        # --- Intra-bin Pruning ---
+        # Map states to physical structural grid bins to maintain uniform coverage
+        bin_dict = {}
+        for tvt, g, p in candidates:
+            bin_idx = int(np.floor(tvt / bin_size))
+            if bin_idx not in bin_dict or g < bin_dict[bin_idx][1]:
+                bin_dict[bin_idx] = (tvt, g, p)
+
+        # --- Inter-bin Pruning (Beam Width restriction) ---
+        # Sort surviving discrete candidates by lowest accumulated cost (A* equivalent score)
+        sorted_states = sorted(bin_dict.values(), key=lambda x: x[1])
+        current_states = sorted_states[:beam_width]
+
+    # Select the optimal sequence containing the minimum total error metric
+    best_state = min(current_states, key=lambda x: x[1])
+    return best_state[2]
+
+
+def default_optimize_well_tvt(
+    horizontal_df: pd.DataFrame, 
+    typewell_df: pd.DataFrame, 
+    jump_penalty: float = 50.0,
+    beam_width: int = 20
+) -> list:
+    """Optimizes the TVT assignment sequence for a horizontal well's evaluation zone.
+
+    Finds a sequence of TVT values that minimizes the cumulative squared error 
+    between observed GR and mapped TVT values, incorporating specified transition 
+    constraints and jump penalties.
+
+    Args:
+        horizontal_df (pd.DataFrame): Dataframe containing the well log data with columns 
+            'GR' and 'TVT_input'.
+        typewell_df (pd.DataFrame): Reference vertical log dataframe.
+        jump_penalty (float): Penalty added to the cost function when making a non-local jump.
+        beam_width (int): Maximum number of active states tracked per sequence step to control complexity.
+
+    Returns:
+        list: Optimized TVT assignments matching the length of the evaluation zone sequence.
+    """
+    # Identify the evaluation zone (where TVT_input is missing)
+    eval_mask = horizontal_df["TVT_input"].isna()
+    if not eval_mask.any():
+        return []
+
+    # Locate the starting anchor point (the last valid TVT entry before evaluation zone)
+    valid_indices = horizontal_df.index[~eval_mask]
+    if len(valid_indices) == 0:
+        raise ValueError("No valid starting TVT point found in horizontal_df['TVT_input'].")
+    
+    last_valid_idx = valid_indices[-1]
+    tvt_0 = float(horizontal_df.loc[last_valid_idx, "TVT_input"])
+    
+    # Extract evaluation GR sequence
+    eval_gr = horizontal_df.loc[eval_mask, "GR"].to_numpy()
+    
+    # Track states: { current_tvt: (cumulative_cost, path_history_list) }
+    active_states = {tvt_0: (0.0, [])}
+
+    for gr_val in tqdm(eval_gr, desc="Optimizing TVT Path"):
+        next_states = {}
+        
+        # Get all mapped target candidates for the current GR point
+        candidates = gr_to_tvt(gr_val, typewell_df)
+        if not isinstance(candidates, (list, np.ndarray)):
+            candidates = [candidates]
+        candidates = [float(c) for c in candidates]
+        
+        for last_tvt, (current_cost, path) in active_states.items():
+            
+            # 1. Determine "Slight change" options
+            slight_change_options = []
+            forced_matches = [c for c in candidates if abs(c - last_tvt) < 0.1]
+            
+            if len(forced_matches) > 0:
+                # Forced Match Rule: Use matching candidates within range
+                slight_change_options = forced_matches
+            else:
+                # Fallback Rule: Fixed offset movements (modified to 0 movement only)
+                slight_change_options = [last_tvt]
                 
-                # Option 2: Discretized Global Jump Branching (Unconditional execution per state)
-                jump_transitions = self._transition_jump(i=i, gr_target=gr_target)
-                for next_state_key, transition_error, next_tvt in jump_transitions:
-                    total_error = current_error + transition_error
+            # Process Slight Changes (Penalty = 0)
+            for next_tvt in slight_change_options:
+                mapped_gr = tvt_to_gr(next_tvt, typewell_df)
+                step_cost = (gr_val - mapped_gr) ** 2
+                total_cost = current_cost + step_cost
+                
+                if next_tvt not in next_states or total_cost < next_states[next_tvt][0]:
+                    next_states[next_tvt] = (total_cost, path + [next_tvt])
                     
-                    if next_state_key not in self.dp_states or total_error < self.dp_states[next_state_key]:
-                        self.dp_states[next_state_key] = total_error
-                        self.parent_map[next_state_key] = current_state_key
-                        self.tvt_at_state[next_state_key] = next_tvt
-        
-        final_states_at_n_minus_1 = [
-            ((i, v), error) for (i, v), error in self.dp_states.items() if i == n - 1
-        ]
-        
-        if not final_states_at_n_minus_1:
-            raise ValueError("No valid path found in DP optimization.")
-        
-        best_final_state, min_error = min(final_states_at_n_minus_1, key=lambda x: x[1])
-        tvt_sequence = self._reconstruct_path(final_state=best_final_state)
-        
-        return tvt_sequence, min_error
+        # Apply Beam Width Pruning to keep execution runtime and memory linear
+        if len(next_states) > beam_width:
+            sorted_states = sorted(next_states.items(), key=lambda item: item[1][0])
+            active_states = dict(sorted_states[:beam_width])
+        else:
+            active_states = next_states
 
-    def _reconstruct_path(self, *, final_state: Tuple[int, int]) -> List[float]:
-        """
-        Traces back from the absolute minimal end state to get the comprehensive optimal TVT path.
-
-        Args:
-            final_state (Tuple[int, int]): Optimal final state descriptor key (n-1, v).
-
-        Returns:
-            List[float]: Ordered sequence of optimized TVT data points.
-        """
-        path = []
-        current_state = final_state
-        
-        while current_state in self.tvt_at_state:
-            path.append(self.tvt_at_state[current_state])
-            if current_state not in self.parent_map:
-                break
-            current_state = self.parent_map[current_state]
-        
-        path.reverse()
-        return path
+    # Select path containing lowest global error score
+    best_tvt_sequence = min(active_states.values(), key=lambda item: item[0])[1]
+    
+    return best_tvt_sequence

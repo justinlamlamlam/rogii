@@ -43,3 +43,29 @@ def get_raw_data(data_loc: str) -> dict:
         assert typewell is not None
         raw_data[prefix] = (horizontal_well, typewell)
     return raw_data
+
+def interpolate_gr(raw_data: dict) -> dict:
+    """
+    Interpolates missing values linearly in the 'GR' column for both DataFrames in the dictionary.
+
+    Args:
+        raw_data (dict): Dictionary mapping well_id to a tuple of (horizontal_well, typewell) DataFrames.
+
+    Returns:
+        dict: The updated dictionary with interpolated 'GR' columns in the DataFrames.
+    """
+    for prefix, (horizontal_well, typewell) in raw_data.items():
+        # Interpolate 'GR' column if it exists in horizontal_well
+        if "GR" in horizontal_well.columns:
+            horizontal_well["GR"] = horizontal_well["GR"].interpolate(method="linear", limit_direction="both")
+            
+        raw_data[prefix] = (horizontal_well, typewell)
+        
+    return raw_data
+
+def preprocess_data(raw_data: dict) -> dict:
+    """
+    preprocess data for a well
+    """
+    interpolated_data = interpolate_gr(raw_data=raw_data)
+    return interpolated_data

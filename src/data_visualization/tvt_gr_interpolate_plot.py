@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import sys
 sys.path.append("/home/justinlamlamlam/python/kaggle/rogii/src")
 import helper
+from helper.data_handling import preprocess_data
 
 def plot_well_data(raw_data: dict) -> None:
     """
