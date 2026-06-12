@@ -5,9 +5,6 @@ import pandas as pd
 import os
 from helper.data_handling import get_raw_data
 
-# data_summary.py
-import numpy as np
-
 def calculate_well_metrics(raw_data: dict) -> tuple:
     """
     Calculates the mean sequence length of horizontal wells, the mean of the max GR difference 
