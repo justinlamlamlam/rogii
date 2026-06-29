@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import sys
 sys.path.append("./src")
 import helper
-from helper.global_optimization import optimize_well_tvt, default_optimize_well_tvt
+from helper.global_optimization import optimize_well_tvt
 from helper.data_handling import preprocess_data
 
 def plot_well_data(raw_data: dict) -> None:
@@ -62,6 +62,9 @@ def plot_well_data(raw_data: dict) -> None:
             max_tvt_diff=20,
             beam_width=100,
             allow_jump=False,
+            tvt_range_penalty_rate=10000,
+            tvt_range_min=20,
+            tvt_range_max=50,
         )
 
         # Update figure layout to accommodate 5 columns

@@ -147,6 +147,58 @@ def plot_tvt_separation_distribution(raw_data: dict, save_dir: str) -> None:
     plt.savefig(save_path)
     plt.close()
 
+import os
+import numpy as np
+import matplotlib.pyplot as plt
+
+def plot_tvt_separation_distribution_bar(raw_data: dict, save_dir: str) -> None:
+    """
+    Plots the distribution of TVT separation values across all valid wells as a bar chart (histogram)
+    with a bin size of 2 and saves the figure to the specified directory.
+
+    Args:
+        raw_data (dict): Dictionary mapping well_id (str) to a tuple of (horizontal_well, typewell) DataFrames.
+        save_dir (str): Path to the directory where the plot should be saved.
+
+    Returns:
+        None
+    """
+    separations = []
+
+    for prefix, (horizontal_well, typewell) in raw_data.items():
+        if "TVT_input" in horizontal_well.columns and "TVT" in horizontal_well.columns:
+            valid_indices = horizontal_well["TVT_input"].notna()
+            if valid_indices.any():
+                last_pos = np.max(np.where(valid_indices)[0])
+                after_df = horizontal_well.iloc[last_pos + 1:]
+                if not after_df.empty and not after_df["TVT"].dropna().empty:
+                    tvt_after = after_df["TVT"].dropna()
+                    sep = float(tvt_after.max() - tvt_after.min())
+                    separations.append(sep)
+
+    if not separations:
+        print("No valid TVT separation data found to plot.")
+        return
+
+    os.makedirs(save_dir, exist_ok=True)
+    
+    # Define bins with a step size of 2 based on data range
+    min_val = np.floor(np.min(separations))
+    max_val = np.ceil(np.max(separations))
+    bins = np.arange(start=min_val, stop=max_val + 2, step=2)
+    
+    # Plot distribution as a bar chart histogram
+    plt.hist(separations, bins=bins, alpha=0.7, edgecolor="k")
+    plt.title("Distribution of TVT Separation After Last TVT_input Point")
+    plt.xlabel("TVT Separation (Bin Size = 2)")
+    plt.ylabel("Count")
+    plt.grid(True, linestyle="--", alpha=0.5)
+    plt.tight_layout()
+    
+    save_path = os.path.join(save_dir, "tvt_separation_scatter_bar.png")
+    plt.savefig(save_path)
+    plt.close()
+
 # Example execution template
 if __name__ == "__main__":
     # Define directory location
@@ -170,3 +222,4 @@ if __name__ == "__main__":
 
     # Plot and save distribution
     plot_tvt_separation_distribution(raw_data=data, save_dir="data/graphs/data_summary/")
+    plot_tvt_separation_distribution_bar(raw_data=data, save_dir="data/graphs/data_summary/")
