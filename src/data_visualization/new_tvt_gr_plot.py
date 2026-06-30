@@ -24,6 +24,8 @@ def plot_well_data(raw_data: dict) -> None:
     }
     """
     processed_data = preprocess_data(raw_data=raw_data)
+    print(processed_data)
+    return
     # Only process the first 10 items
     for i, (prefix, (horizontal_well, typewell)) in enumerate(sorted(raw_data.items())):
         if i >= 10:
