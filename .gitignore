@@ -224,3 +224,8 @@ inference.sh
 plan.md
 data.md
 question.md
+temp
+*.pkl
+catboost_info/
+submission.csv
+model_features.json

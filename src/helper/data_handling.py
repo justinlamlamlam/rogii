@@ -308,6 +308,27 @@ def enforce_matrix_typecasting(raw_data: dict) -> dict:
     return raw_data
 
 # ==============================================================================
+# FEATURE ENGINEERING
+# ==============================================================================
+
+def add_likpf_features(df: pd.DataFrame, likpf: pd.DataFrame) -> pd.DataFrame:
+    """
+    Appends the particle filter trajectory features and computes relative delta depth profiles.
+
+    Args:
+        df (pd.DataFrame): The main processed horizontal well feature dataframe.
+        likpf (pd.DataFrame): Matrix container storing raw likelihood simulation trajectory logs.
+
+    Returns:
+        pd.DataFrame: Augmented dataframe with raw simulation tracks and delta coordinate maps.
+    """
+    df = df.merge(right=likpf, on="id", how="left")
+    for c in [col for col in likpf.columns if col != "id"]:
+        df[c] = df[c].fillna(value=df["last_known_tvt"])
+        df[c + "_d"] = (df[c] - df["last_known_tvt"]).astype(np.float32)
+    return df
+
+# ==============================================================================
 # PIPELINE ENSEMBLE MANAGER
 # ==============================================================================
 
