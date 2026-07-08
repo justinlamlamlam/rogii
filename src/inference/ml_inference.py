@@ -41,8 +41,7 @@ def parse_user_arguments() -> argparse.Namespace:
 
 def process_test_split(base_path: str) -> tuple:
     """
-    Loads raw data tables and runs complete preprocessing for the testing folder.
-    Clears internal dataframe metadata (.attrs) to prevent numpy broadcasting failures during concat.
+    Loads raw data tables, removes MD column, injects a safe row number id, and runs preprocessing.
 
     Args:
         base_path (str): The root directory location for data storage.
@@ -61,9 +60,14 @@ def process_test_split(base_path: str) -> tuple:
     processed_hw_list = []
     simulation_tracks_list = []
     
-    standard_cols = ["MD", "GR_smooth", "GR_norm", "dZ", "dMD", "is_evaluation_zone", "TVT_input"]
+    # MD removed from columns slice list
+    standard_cols = ["GR_smooth", "GR_norm", "dZ", "is_evaluation_zone", "TVT_input"]
     
     for prefix, (horizontal_well, typewell) in preprocessed_split.items():
+        # Remove MD column from original raw dataframe structures
+        if "MD" in horizontal_well.columns:
+            horizontal_well = horizontal_well.drop(columns=["MD"])
+            
         formation_lbl = "OTHER"
         if "Geology" in horizontal_well.columns:
             non_na_geol = horizontal_well["Geology"].dropna()
@@ -76,17 +80,19 @@ def process_test_split(base_path: str) -> tuple:
             formation_lbl=formation_lbl
         )
         
-        eval_mask = horizontal_well["is_evaluation_zone"] == 1
-        eval_mds = horizontal_well.loc[eval_mask, "MD"].values
+        # Inject positional zero-indexed sequential row numbers as explicit tracking index elements
+        horizontal_well["row_num"] = np.arange(len(horizontal_well))
         
-        truncated_prediction = predicted_tvt_path[:len(eval_mds)]
-        eval_ids = [f"{prefix}_{str(md)}" for md in eval_mds]
+        eval_mask = horizontal_well["is_evaluation_zone"] == 1
+        eval_row_nums = horizontal_well.loc[eval_mask, "row_num"].values
+        
+        truncated_prediction = predicted_tvt_path[:len(eval_row_nums)]
+        eval_ids = [f"{prefix}_{str(rn)}" for rn in eval_row_nums]
         
         sim_df = pd.DataFrame(data={
             "id": eval_ids,
             "sim_predicted_tvt": truncated_prediction.astype(dtype=np.float32)
         })
-        # Clear metadata attributes to prevent broadcasting exceptions in concat
         sim_df.attrs = {}
         simulation_tracks_list.append(sim_df)
         
@@ -94,13 +100,12 @@ def process_test_split(base_path: str) -> tuple:
         cleaned_hw = horizontal_well[available_cols].copy()
         
         cleaned_hw["well_id"] = prefix
-        cleaned_hw["id"] = cleaned_hw["MD"].apply(func=lambda x: f"{prefix}_{str(x)}")
+        cleaned_hw["id"] = horizontal_well["row_num"].apply(func=lambda x: f"{prefix}_{str(x)}")
         
         kn_zone = horizontal_well[horizontal_well["is_evaluation_zone"] == 0]
         last_tvt = float(kn_zone["TVT_input"].iloc[-1]) if not kn_zone.empty else float(typewell["TVT"].median())
         cleaned_hw["last_known_tvt"] = np.float32(last_tvt)
         
-        # Completely clear complex array metadata attributes from preprocessing tracking pipelines
         cleaned_hw.attrs = {}
         processed_hw_list.append(cleaned_hw)
         
@@ -133,6 +138,7 @@ def run_inference_pipeline(data_loc: str) -> None:
         with open(file=features_config_path, mode="r", encoding="utf-8") as f:
             model_features = json.load(fp=f)
     else:
+        # dMD explicitly removed from baseline configuration array maps
         model_features = [
             "GR_smooth", "GR_norm", "dZ", 
             "last_known_tvt", "sim_predicted_tvt", "sim_predicted_tvt_d"
