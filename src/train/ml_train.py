@@ -3,10 +3,10 @@
 import os
 import sys
 import argparse
+import json
 from pathlib import Path
 import pandas as pd
 import numpy as np
-import joblib
 
 current_script_dir = os.path.dirname(os.path.abspath(__file__))
 src_path = os.path.abspath(os.path.join(current_script_dir, "..", "..", "src"))
@@ -51,6 +51,7 @@ def parse_user_arguments() -> argparse.Namespace:
 def process_train_split(base_path: str) -> tuple:
     """
     Loads raw data tables and runs complete preprocessing for the training folder.
+    Clears internal dataframe metadata (.attrs) to prevent numpy broadcasting failures during concat.
 
     Args:
         base_path (str): The root directory location for data storage.
@@ -68,6 +69,8 @@ def process_train_split(base_path: str) -> tuple:
     processed_hw_list = []
     simulation_tracks_list = []
     
+    standard_cols = ["MD", "GR_smooth", "GR_norm", "dZ", "dMD", "is_evaluation_zone", "TVT_input"]
+    
     for prefix, (horizontal_well, typewell) in preprocessed_split.items():
         formation_lbl = "OTHER"
         if "Geology" in horizontal_well.columns:
@@ -82,24 +85,35 @@ def process_train_split(base_path: str) -> tuple:
         )
         
         eval_mask = horizontal_well["is_evaluation_zone"] == 1
-        eval_ids = horizontal_well.loc[eval_mask, "MD"].values
+        eval_mds = horizontal_well.loc[eval_mask, "MD"].values
+        
+        truncated_prediction = predicted_tvt_path[:len(eval_mds)]
+        eval_ids = [f"{prefix}_{str(md)}" for md in eval_mds]
         
         sim_df = pd.DataFrame(data={
-            "MD": eval_ids,
-            "sim_predicted_tvt": predicted_tvt_path.astype(dtype=np.float32)
+            "id": eval_ids,
+            "sim_predicted_tvt": truncated_prediction.astype(dtype=np.float32)
         })
+        # Clear metadata attributes to prevent broadcasting exceptions in concat
+        sim_df.attrs = {}
         simulation_tracks_list.append(sim_df)
         
-        horizontal_well["well_id"] = prefix
+        available_cols = [c for c in standard_cols if c in horizontal_well.columns]
+        cleaned_hw = horizontal_well[available_cols].copy()
+        
+        cleaned_hw["well_id"] = prefix
+        cleaned_hw["id"] = cleaned_hw["MD"].apply(func=lambda x: f"{prefix}_{str(x)}")
         
         kn_zone = horizontal_well[horizontal_well["is_evaluation_zone"] == 0]
         last_tvt = float(kn_zone["TVT_input"].iloc[-1]) if not kn_zone.empty else float(typewell["TVT"].median())
-        horizontal_well["last_known_tvt"] = np.float32(last_tvt)
+        cleaned_hw["last_known_tvt"] = np.float32(last_tvt)
         
-        processed_hw_list.append(horizontal_well)
-        
-    master_hw = pd.concat(objs=processed_hw_list, ignore_index=True)
-    master_sim = pd.concat(objs=simulation_tracks_list, ignore_index=True)
+        # Completely clear complex array metadata attributes from preprocessing tracking pipelines
+        cleaned_hw.attrs = {}
+        processed_hw_list.append(cleaned_hw)
+
+    master_hw = pd.concat(objs=processed_hw_list, axis=0, ignore_index=True)
+    master_sim = pd.concat(objs=simulation_tracks_list, axis=0, ignore_index=True)
     
     return master_hw, master_sim
 
@@ -139,21 +153,18 @@ def run_training_pipeline(data_loc: str, use_sim_cache: bool = True) -> None:
     train_df["target_tvt"] = train_df["TVT_input"]
     
     model_features = [
-        "GR_smooth", "GR_norm", "dZ", "dMD", 
+        "GR_smooth", "GR_norm", "dZ", 
         "last_known_tvt", "sim_predicted_tvt", "sim_predicted_tvt_d"
     ]
     model_features = [f for f in model_features if f in train_df.columns]
     
-    # Save the selected model features configuration list for the inference script
     with open(file="model_features.json", mode="w", encoding="utf-8") as f:
-        import json
         json.dump(obj=model_features, fp=f)
         
     print("--> Training GBDT stacking ensemble loops on processed train split elements...", flush=True)
-    # The models will internally save their state arrays or can be serialized by joblib inside train_stack
     _ = train_stack(
         train_df=train_df,
-        test_df=train_df,  # Proxy evaluation pass during model fit
+        test_df=train_df,
         features=model_features,
         target_col="target_tvt",
         device_mode="cpu"
