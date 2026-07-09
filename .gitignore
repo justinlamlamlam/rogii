@@ -229,3 +229,4 @@ temp
 catboost_info/
 submission.csv
 model_features.json
+*.ipynb
