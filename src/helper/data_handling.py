@@ -363,3 +363,37 @@ def preprocess_data(raw_data: dict) -> dict:
     data = enforce_matrix_typecasting(raw_data=data)
     
     return data
+
+
+def from_submission_csv(raw_data_loc: str) -> dict[str, np.ndarray]:
+    """Reads a submission CSV file, parses the 'id' column into well IDs and data numbers,
+
+    and returns a dictionary mapping each well ID to a sorted numpy array of its
+    'tvt' values.
+
+    Args:
+        raw_data_loc (str): The directory path containing 'submission.csv'.
+
+    Returns:
+        dict[str, np.ndarray]: A dictionary where keys are well IDs (str) and
+            values are numpy arrays of 'tvt' values (float) ordered by their
+            data number.
+    """
+    file_path = os.path.join(raw_data_loc, "submission.csv")
+    df = pd.read_csv(file_path)
+
+    # Split 'id' into 'well_id' and 'data_number'
+    # 'data_number' is converted to integer to ensure correct numerical sorting
+    df[["well_id", "data_number"]] = df["id"].str.split("_", expand=True)
+    df["data_number"] = df["data_number"].astype(int)
+
+    # Sort by well_id and data_number to guarantee the output arrays are in order
+    df = df.sort_values(by=["well_id", "data_number"])
+
+    # Group by well_id and extract the tvt values as numpy arrays
+    result = {
+        str(well_id): group["tvt"].to_numpy()
+        for well_id, group in df.groupby("well_id")
+    }
+
+    return result
