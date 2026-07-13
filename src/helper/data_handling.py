@@ -379,7 +379,7 @@ def from_submission_csv(raw_data_loc: str) -> dict[str, np.ndarray]:
             values are numpy arrays of 'tvt' values (float) ordered by their
             data number.
     """
-    file_path = os.path.join(raw_data_loc, "submission.csv")
+    file_path = os.path.join(raw_data_loc, "ml_submission.csv")
     df = pd.read_csv(file_path)
 
     # Split 'id' into 'well_id' and 'data_number'

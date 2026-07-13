@@ -227,6 +227,6 @@ question.md
 temp
 *.pkl
 catboost_info/
-submission.csv
+*.csv
 model_features.json
 *.ipynb
