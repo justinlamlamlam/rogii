@@ -76,6 +76,6 @@ if __name__ == "__main__":
     sub_df = pd.DataFrame(data=submission_rows)
     
     # Overwrite old target output file with final constrained optimizations
-    submission_path = os.path.join(args.data_loc, "submission.csv")
+    submission_path = "submission.csv"
     sub_df.to_csv(submission_path, index=False)
     print(f"Successfully replaced submission file at: {submission_path}")
