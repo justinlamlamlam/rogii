@@ -64,11 +64,13 @@ if __name__ == "__main__":
             typewell_df=typewell_df,
             ml_solution=ml_sol
         )
+
+        first_none_idx = horizontal_df[horizontal_df["TVT_input"].isna()].index[0]
         
         # Append elements matching submission.csv's exact layout schema: id (well_id_idx), tvt
         for idx, tvt_val in enumerate(optimized_path):
             submission_rows.append({
-                "id": f"{well_id}_{idx}",
+                "id": f"{well_id}_{idx+first_none_idx}",
                 "tvt": tvt_val
             })
 
