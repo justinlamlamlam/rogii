@@ -39,6 +39,48 @@ def parse_user_arguments() -> argparse.Namespace:
     args = parser.parse_args()
     return args
 
+def merge_submission_files(
+    submission_path: str = "submission.csv",
+    ml_submission_path: str = "ml_submission.csv",
+    output_path: str = "submission.csv",
+) -> pd.DataFrame:
+    """Reads two submission CSV files with columns 'id' and 'tvt' and merges them.
+
+    Prioritizes values from submission.csv for each 'id'. If a value is missing or
+    an 'id' is not present in submission.csv, falls back to the value in ml_submission.csv.
+
+    Args:
+        submission_path (str): File path to the primary submission CSV. Defaults to "submission.csv".
+        ml_submission_path (str): File path to the secondary/fallback submission CSV. Defaults to "ml_submission.csv".
+        output_path (str): File path where the merged CSV will be saved. Defaults to "final_submission.csv".
+
+    Returns:
+        pd.DataFrame: The merged DataFrame containing 'id' and prioritized 'tvt' values.
+    """
+    # Read both CSV files into DataFrames
+    df_sub = pd.read_csv(filepath_or_buffer=submission_path)
+    df_ml = pd.read_csv(filepath_or_buffer=ml_submission_path)
+
+    # Perform an outer merge on 'id' to combine all unique IDs from both sources
+    merged_df = pd.merge(
+        left=df_sub,
+        right=df_ml,
+        on="id",
+        how="outer",
+        suffixes=("_sub", "_ml"),
+    )
+
+    # Use combine_first to take tvt_sub if available (and non-NaN), otherwise use tvt_ml
+    merged_df["tvt"] = merged_df["tvt_sub"].combine_first(other=merged_df["tvt_ml"])
+
+    # Keep only the essential columns
+    final_df = merged_df[["id", "tvt"]]
+
+    # Save the result to a new file
+    final_df.to_csv(path_or_buf=output_path, index=False)
+
+    return final_df
+
 if __name__ == "__main__":
     # Parsing arguments
     args = parse_user_arguments()
@@ -80,4 +122,5 @@ if __name__ == "__main__":
     # Overwrite old target output file with final constrained optimizations
     submission_path = "submission.csv"
     sub_df.to_csv(submission_path, index=False)
+    merge_submission_files()
     print(f"Successfully replaced submission file at: {submission_path}")
