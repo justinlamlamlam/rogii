@@ -6,3 +6,5 @@ Interpreting the subsurface is challenging because direct measurements are inher
 
 In this repo, machine learning models are created to predict the geology encountered along a horizontal wellbore to help reduce resource waste by minimizing redundant drilling, improve operational safety by better predicting geological hazards, and move the industry toward automated systems that make faster, more consistent, and data-driven decisions.
 
+An example is as follows: 
+![TvT to Gr plot](data/graphs/tvt_gr/35b30c7f_tvt_gr_plot.png)
